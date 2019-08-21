@@ -2,104 +2,134 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
+const knex = require('knex');
+
+const Clarifai = require('clarifai');
+
+const cApp = new Clarifai.App({
+  apiKey: '401eb0c6f5f34376b6ae24ca795ec2a7'
+})
+
+
+
+const saltRound = 10;
+
+const database = knex({
+  client: 'pg',
+  connection: {
+    host: 'localhost',
+    user: 'kim',
+    password: '',
+    database: 'smart-brain'
+  }
+});
+
 const app = express();
 
 app.use(bodyParser.json());
 app.use(cors());
-
-const findUser = (key, value) => {
-  return database.users.find(user => {
-    if (user[key] === value) {
-      return user;
-    }
-  });
-}
-
-const database = {
-  users: [
-    {
-      id: '123',
-      name: 'John',
-      email: 'john@gmail.com',
-      password: 'cookies',
-      entries: 0,
-      joined: new Date()
-    },
-    {
-      id: '124',
-      name: 'Sally',
-      email: 'sally@gmail.com',
-      password: 'bananas',
-      entries: 0,
-      joined: new Date()
-    }
-  ],
-  login: [{
-    id: '123',
-    email: 'john@gmail.com',
-    password: 'cookies'
-  }, {
-    id: '124',
-    email: 'sally@gmail.com',
-    password: 'bananas',
-  }],
-}
-
-
 
 app.get('/', (req, res) => {
   res.json(database.users);
 }
 )
 
+app.post('/imageurl', (req, res) => {
+  cApp.models.predict(Clarifai.FACE_DETECT_MODEL, req.body.input)
+    .then(data => res.json(data))
+    .catch(err => res.status(400).json('Unable to work with api'))
+})
+
 app.post('/signin', (req, res) => {
-
   const { email, password } = req.body;
-  user = findUser("email", email);
-  if (user && user.password === password) {
-    res.json(user);
-  } else {
-
-    res.status(400).json('Error logging in');
+  if (!email || !password) {
+    return res.status(400).json('Incorrect form submission');
   }
+  database.select('email', 'hash')
+    .from('login')
+    .where('email', '=', email)
+    .then(data => {
+      const isValid = bcrypt.compareSync(password, data[0].hash);
+      if (isValid) {
+        return database.select('*')
+          .from('users')
+          .where('email', '=', email)
+          .then(user => {
+            res.json(user[0]);
+          })
+          .catch(err => {
+            res.status(400).json('Unable to get user');
+          });
+      } else {
+        res.status(400).json('Wrong credentials')
+      }
+    })
+    .catch(err => { res.status(400).json('Wrong credentials') })
 }
 )
 
 app.post('/register', (req, res) => {
   const { name, email, password } = req.body;
-  database.users.push({
-    id: '125',
-    name: name,
-    email: email,
-    password: password,
-    entries: 0,
-    joined: new Date()
-  });
-  res.json(database.users[database.users.length - 1]);
+  if (!name || !email || !password) {
+    return res.status(400).json('Incorrect form submission');
+  }
+
+  const hash = bcrypt.hashSync(password, saltRound);
+  database.transaction(trx => {
+    trx.insert({
+      hash: hash,
+      email: email
+    })
+      .into('login')
+      .returning('email')
+      .then(loginEmail => {
+        return trx('users')
+          .returning('*')
+          .insert({
+            email: loginEmail[0],
+            name: name,
+            joined: new Date()
+          })
+          .then(response => {
+            res.json(response);
+          })
+      })
+      .then(trx.commit)
+      .catch(trx.rollback);
+  })
+    .catch(err => {
+      res.status(400).json('Unable to register');
+    })
 }
 )
 
 app.get('/profile/:id', (req, res) => {
   const { id } = req.params;
-  const found = findUser('id', id);
-
-  if (!found) {
-    res.status(404).json('User not found');
-  } else {
-    res.json(found);
-  }
+  database.select('*')
+    .from('users')
+    .where({ id: id })
+    .then(user => {
+      if (user.length) {
+        res.json(user[0]);
+      } else {
+        res.status(400).json('User not found')
+      }
+    })
+    .catch(err => res.status(400).json('Error getting user'))
 }
 )
 
 app.put('/image', (req, res) => {
   const { id } = req.body;
-  const found = findUser('id', id);
-  if (!found) {
-    res.status(404).json('User not found');
-  } else {
-    found.entries++;
-    return res.json(found.entries);
-  }
+  database('users').where('id', '=', id)
+    .increment('entries', 1)
+    .returning('entries')
+    .then(entries => {
+      res.json(entries[0]);
+    })
+    .catch(err => {
+      res.status(400).json('Unable to get entries');
+    })
 });
 
 app.listen(3000, () => {
