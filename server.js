@@ -1,9 +1,11 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-
+const bcrypt = require('bcrypt');
+const cors = require('cors');
 const app = express();
 
 app.use(bodyParser.json());
+app.use(cors());
 
 const findUser = (key, value) => {
   return database.users.find(user => {
@@ -12,7 +14,6 @@ const findUser = (key, value) => {
     }
   });
 }
-
 
 const database = {
   users: [
@@ -32,15 +33,19 @@ const database = {
       entries: 0,
       joined: new Date()
     }
-  ]
+  ],
+  login: [{
+    id: '123',
+    email: 'john@gmail.com',
+    password: 'cookies'
+  }, {
+    id: '124',
+    email: 'sally@gmail.com',
+    password: 'bananas',
+  }],
 }
-/*
-/ --> res = this is working
-/signin --> POST = success/fail
-/register --> POST = user
-/profile:userId --> GET = user
-/image --> PUT --> user
- */
+
+
 
 app.get('/', (req, res) => {
   res.json(database.users);
@@ -48,13 +53,15 @@ app.get('/', (req, res) => {
 )
 
 app.post('/signin', (req, res) => {
+
   const { email, password } = req.body;
   user = findUser("email", email);
   if (user && user.password === password) {
-    res.json('Success');
-  }
+    res.json(user);
+  } else {
 
-  res.status(400).json('Error logging in');
+    res.status(400).json('Error logging in');
+  }
 }
 )
 
